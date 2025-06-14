@@ -22,7 +22,7 @@ import pathlib
 import time
 from dataclasses import dataclass, field
 from pprint import pprint
-from typing import List, Literal
+from typing import List, Literal, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,8 +56,8 @@ class ArgsConfig:
     video_backend: Literal["decord", "torchvision_av"] = "decord"
     """Backend to use for video loading, use torchvision_av for av encoded videos."""
 
-    plot_state_action: bool = False
-    """Whether to plot the state and action space."""
+    plot_state_action: Union[bool, str] = False
+    """If True, plot state and action space. If a path is provided, save the plot to the path instead of displaying."""
 
     steps: int = 200
     """Number of steps to plot."""
@@ -88,7 +88,8 @@ def get_modality_keys(dataset_path: pathlib.Path) -> dict[str, list[str]]:
 def plot_state_action_space(
     state_dict: dict[str, np.ndarray],
     action_dict: dict[str, np.ndarray],
-    shared_keys: list[str] = ["left_arm", "right_arm", "left_hand", "right_hand"],
+    shared_keys: list[str],
+    save_path: Optional[str] = None,
 ):
     """
     Plot the state and action space side by side.
@@ -96,7 +97,12 @@ def plot_state_action_space(
     state_dict: dict[str, np.ndarray] with key: [Time, Dimension]
     action_dict: dict[str, np.ndarray] with key: [Time, Dimension]
     shared_keys: list[str] of keys to plot (without the "state." or "action." prefix)
+    save_path: Optional[str] path to save the plot. If provided, the plot is saved and not shown.
     """
+    if not shared_keys:
+        print_yellow("Warning: No shared keys provided for plotting.")
+        return
+
     # Create a figure with one subplot per shared key
     fig = plt.figure(figsize=(16, 4 * len(shared_keys)))
 
@@ -168,6 +174,13 @@ def plot_state_action_space(
         ax.legend(by_label.values(), by_label.keys(), loc="upper right")
 
     plt.tight_layout()
+    if save_path:
+        # Ensure the directory exists
+        p = pathlib.Path(save_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+        print(f"State and action space plot saved to {save_path}")
+        plt.close(fig)
 
 
 def plot_image(image: np.ndarray):
@@ -186,7 +199,7 @@ def load_dataset(
     embodiment_tag: str,
     video_backend: str = "decord",
     steps: int = 200,
-    plot_state_action: bool = False,
+    plot_state_action: Union[bool, str] = False,
 ):
     assert len(dataset_path) > 0, "dataset_path must be a list of at least one path"
 
@@ -325,9 +338,24 @@ def load_dataset(
     for action_key in action_modality_keys:
         action_dict[action_key] = np.array(action_dict[action_key])
 
-    if plot_state_action:
-        plot_state_action_space(state_dict, action_dict)
-        print("Plotted state and action space")
+    if plot_state_action is not False:
+        save_path = None
+        if isinstance(plot_state_action, str) and plot_state_action:
+            save_path = plot_state_action
+
+        # Automatically find shared keys between state and action modalities
+        state_suffixes = {key.replace("state.", "") for key in state_modality_keys}
+        action_suffixes = {key.replace("action.", "") for key in action_modality_keys}
+        shared_keys = sorted(list(state_suffixes.intersection(action_suffixes)))
+
+        if not shared_keys:
+            print_yellow(
+                "Warning: No shared keys found between state and action modalities. Skipping plot."
+            )
+        else:
+            plot_state_action_space(state_dict, action_dict, shared_keys=shared_keys, save_path=save_path)
+            if not save_path:
+                print("Plotted state and action space")
 
     fig, axs = plt.subplots(4, total_images // 4, figsize=(20, 10))
     for i, ax in enumerate(axs.flat):
